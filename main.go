@@ -4,7 +4,7 @@ import (
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 	"log"
-	"pkg.re/essentialkaos/translit.v2"
+	"strings"
 )
 
 var startKeyboard = tgbotapi.NewReplyKeyboard(
@@ -14,9 +14,8 @@ var startKeyboard = tgbotapi.NewReplyKeyboard(
 )
 var weatherKeyboard = tgbotapi.NewReplyKeyboard(
 	tgbotapi.NewKeyboardButtonRow(
-		tgbotapi.NewKeyboardButton("Погода на сегодня"),
-		tgbotapi.NewKeyboardButton("Погода на завтра"),
-
+		tgbotapi.NewKeyboardButton(fmt.Sprintf("Погода на сегодня %v", "\U000026C4")),
+		tgbotapi.NewKeyboardButton(fmt.Sprintf("Погода на завтра %v", "\U00002614")),
 	),
 	tgbotapi.NewKeyboardButtonRow(
 		tgbotapi.NewKeyboardButton("Поменять город"),
@@ -25,11 +24,9 @@ var weatherKeyboard = tgbotapi.NewReplyKeyboard(
 
 func main() {
 
-	// находимся ли мы в процессе выбора города
-	var cityChoosen bool
-	var city string
-
-	bot, err := tgbotapi.NewBotAPI("2028283945:AAHWh2ms5PICriwlu-fvHx8jEDU-cfx_mFI")
+	cities := make(map[int64]string, 50)
+	token := "2028283945:AAHWh2ms5PICriwlu-fvHx8jEDU-cfx_mFI"
+	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -43,43 +40,66 @@ func main() {
 
 	updates, err := bot.GetUpdatesChan(u)
 	for update := range updates {
+		// находимся ли мы в процессе выбора города
+
 		if update.Message == nil {
 			continue
 		}
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Пожалуйста нажмите выбрать город, чтобы начать")
 
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Пожалуйста нажмите выбрать город, чтобы начать")
 		switch update.Message.Text {
 		case "/start":
-			msg.ReplyMarkup = startKeyboard
+			// Если пользователь раннее вводил город
+			if _, ok := cities[update.Message.Chat.ID]; ok {
+				msg.ReplyMarkup = weatherKeyboard
+			} else {
+				msg.ReplyMarkup = startKeyboard
+			}
+
 		case "Выбрать город":
-			cityChoosen = true
 			msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Напишите название города")
 			msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
-		case "Погода на сегодня":
-			temp, _ := GetTemperature(city)
-			msg = tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("Температура равна:  %f", temp))
+		case fmt.Sprintf("Погода на сегодня %v", "\U000026C4"):
+			// Получаем и выводим погоду
+			city := cities[update.Message.Chat.ID]
+			err := GetWeather(city)
+			if err != nil {
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка проверки погоды")
+			}
+
+			temp, _ := GetTemperature(city, 0)
+			msg = tgbotapi.NewMessage(update.Message.Chat.ID, strings.Title(temp))
+		case fmt.Sprintf("Погода на завтра %v", "\U00002614"):
+			// Получаем и выводим погоду
+			city := cities[update.Message.Chat.ID]
+			err := GetWeather(city)
+			if err != nil {
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Ошибка проверки погоды")
+			}
+
+			temp, _ := GetTemperature(city, 1)
+			msg = tgbotapi.NewMessage(update.Message.Chat.ID, strings.Title(temp))
 		case "Поменять город":
-			cityChoosen = true
+			// Удаляем существующий городу по ключу
+			delete(cities, update.Message.Chat.ID)
 			msg.ReplyMarkup = startKeyboard
 		default:
-			if cityChoosen {
-				city = update.Message.Text
-				city = translit.EncodeToISO9A(city)
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Вы выбрали город " + city)
+			if _, ok := cities[update.Message.Chat.ID]; ok {
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Некорректная команда")
+				msg.ReplyMarkup = weatherKeyboard
+			} else {
+				cities[update.Message.Chat.ID] = update.Message.Text
+				city := cities[update.Message.Chat.ID]
+				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Вы выбрали город "+city)
 				err := GetWeather(city)
 				msg.ReplyMarkup = weatherKeyboard
 				if err != nil {
 					msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Некорректный город")
 					msg.ReplyMarkup = startKeyboard
 				}
-
-				cityChoosen = false
-			} else {
-				msg = tgbotapi.NewMessage(update.Message.Chat.ID, "Некорректная команда")
 			}
 
 		}
-
 
 		bot.Send(msg)
 	}
